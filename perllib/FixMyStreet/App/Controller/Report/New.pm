@@ -993,6 +993,13 @@ sub check_for_errors : Private {
         delete $field_errors{name};
     }
 
+    # if using social login then we don't care about name and email errors
+    $c->stash->{is_social_user} = $c->get_param('facebook_sign_in') || $c->get_param('twitter_sign_in');
+    if ( $c->stash->{is_social_user} ) {
+        delete $field_errors{name};
+        delete $field_errors{email};
+    }
+
     # add the photo error if there is one.
     if ( my $photo_error = delete $c->stash->{photo_error} ) {
         $field_errors{photo} = $photo_error;
@@ -1017,7 +1024,41 @@ before or they are currently logged in. Otherwise discard any changes.
 
 sub save_user_and_report : Private {
     my ( $self, $c ) = @_;
-    my $report      = $c->stash->{report};
+    my $report = $c->stash->{report};
+
+    # If there was a photo add that
+    if ( my $fileid = $c->stash->{upload_fileid} ) {
+        $report->photo($fileid);
+    }
+
+    # Set a default if possible
+    $report->category( _('Other') ) unless $report->category;
+
+    # Set unknown to DB unknown
+    $report->bodies_str( undef ) if $report->bodies_str eq '-1';
+
+    # if there is a Message Manager message ID, pass it back to the client view
+    if ($c->cobrand->moniker eq 'fixmybarangay' && $c->get_param('external_source_id') =~ /^\d+$/) {
+        $c->stash->{external_source_id} = $c->get_param('external_source_id');
+        $report->external_source_id( $c->get_param('external_source_id') );
+        $report->external_source( $c->config->{MESSAGE_MANAGER_URL} ) ;
+    }
+
+    if ( $c->stash->{is_social_user} ) {
+        my $token = $c->model("DB::Token")->create( {
+            scope => 'problem/social',
+            data => { $report->get_inflated_columns },
+        } );
+
+        $c->stash->{detach_to} = '/tokens/confirm_problem_with_social_login';
+        $c->stash->{detach_args} = [$token->token];
+
+        if ( $c->get_param('facebook_sign_in') ) {
+            $c->detach('/auth/facebook_sign_in');
+        } elsif ( $c->get_param('twitter_sign_in') ) {
+            $c->detach('/auth/twitter_sign_in');
+        }
+    }
 
     # Save or update the user if appropriate
     if ( $c->cobrand->never_confirm_reports ) {
@@ -1027,6 +1068,7 @@ sub save_user_and_report : Private {
             $report->user->insert();
         }
         $report->confirm();
+
     } elsif ( !$report->user->in_storage ) {
         # User does not exist.
         # Store changes in token for when token is validated.
@@ -1063,24 +1105,6 @@ sub save_user_and_report : Private {
         $c->log->info($report->user->id . ' exists, but is not logged in for this report');
     }
 
-    # If there was a photo add that too
-    if ( my $fileid = $c->stash->{upload_fileid} ) {
-        $report->photo($fileid);
-    }
-
-    # Set a default if possible
-    $report->category( _('Other') ) unless $report->category;
-
-    # Set unknown to DB unknown
-    $report->bodies_str( undef ) if $report->bodies_str eq '-1';
-
-    # if there is a Message Manager message ID, pass it back to the client view
-    if ($c->cobrand->moniker eq 'fixmybarangay' && $c->get_param('external_source_id') =~ /^\d+$/) {
-        $c->stash->{external_source_id} = $c->get_param('external_source_id');
-        $report->external_source_id( $c->get_param('external_source_id') );
-        $report->external_source( $c->config->{MESSAGE_MANAGER_URL} ) ;
-    }
-    
     # save the report;
     $report->in_storage ? $report->update : $report->insert();
 

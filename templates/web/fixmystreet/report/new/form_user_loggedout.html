@@ -1,3 +1,7 @@
+[% IF c.config.TWITTER_KEY %]
+    <button name="twitter_sign_in" id="twitter_sign_in" value="twitter_sign_in" class="btn btn-block btn-social btn-twitter">Log in with Twitter</button>
+[% END %]
+
 <label for="form_email">[% loc('Your email') %]
     <span class="muted">([% loc('We never show your email') %])</span>
 </label>
